@@ -1,0 +1,7 @@
+
+.ipynb_checkpoints
+VOCdevkit
+*.tar
+__pycache__
+media/*
+models/*

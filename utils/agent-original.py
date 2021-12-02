@@ -37,8 +37,15 @@ class Agent():
         self.alpha = alpha                       # €[0, 1]  Scaling factor
         self.nu = nu                             # Reward of Trigger
         self.threshold = threshold               # threshold of IoU to consider as True detection
-        self.actions_history = None              # action history vector as record, later initialized in train/predict
+        self.actions_history = [[100]*9]*20      # action history vector as record
         self.steps_done = 0                      # to count how many steps it used to compute the final bdbox
+        
+        # training settings
+        self.BATCH_SIZE = 128                    # batch size
+        self.num_episodes = num_episodes         # number of total episodes
+        self.memory = ReplayMemory(10000)        # experience memory object
+        self.TARGET_UPDATE = 1                   # frequence of update target net
+        self.optimizer = optim.Adam(self.policy_net.parameters(),lr=1e-6)  # optimizer
         
         # networks
         self.classe = classe                     # which class this agent is working on
@@ -56,21 +63,12 @@ class Agent():
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()                    # target net - same DQN as policy net, works as frozen net to compute loss
                                                   # initialize as the same as policy net, use eval to disable Dropout
-            
-        # training settings
-        self.BATCH_SIZE = 128                    # batch size
-        self.num_episodes = num_episodes         # number of total episodes
-        self.memory = ReplayMemory(10000)        # experience memory object
-        self.TARGET_UPDATE = 1                   # frequence of update target net
-        self.optimizer = optim.Adam(self.policy_net.parameters(),lr=1e-6)  # optimizer
         
         if use_cuda:
             self.feature_extractor = self.feature_extractor.cuda()
             self.target_net = self.target_net.cuda()
             self.policy_net = self.policy_net.cuda()
         
-        ## newly added
-        self.current_coord = [0,224,0,224]
 
     def save_network(self):
         torch.save(self.policy_net, self.save_path + "_" + self.model_name + "_" +self.classe)
@@ -111,13 +109,13 @@ class Agent():
         The reward will be +1 if IoU increases, and -1 if decreases or stops
         ----------
         Argument:
-        actual_state   - new bounding box after action
+        actual_state - new bounding box after action
         previous_state - old boudning box
-        ground_truth   - ground truth bounding box of current object
+        ground_truth - ground truth bounding box of current object
         *all bounding boxes comes in four elements vector (left, right, top, bottom)
         ----------
         Return:
-        reward         - +1/-1 depends on difference between IoUs
+        reward - +1/-1 depends on difference between IoUs
         """
         res = self.intersection_over_union(actual_state, ground_truth) - self.intersection_over_union(previous_state, ground_truth)
         if res <= 0:
@@ -135,7 +133,7 @@ class Agent():
         *all bounding boxes comes in four elements vector (left, right, top, bottom)
         ----------
         Return:
-        reward       - +nu/-nu depends on final IoU
+        reward - +nu/-nu depends on final IoU
         """
         res = self.intersection_over_union(actual_state, ground_truth)
         if res>=self.threshold:
@@ -145,79 +143,84 @@ class Agent():
         
     
     ###########################
-    # 2. Functions to get actions 
-    def calculate_position_box(self, current_coord, action):
+    # 2. Functions to get actions
+    def calculate_position_box(self, actions):
         """
-        Calculate new coordinate based on current coordinate and taken action.
-        ----------
+        Compute new position box given actions, 
+        Actions comes in an array of indexes, conducted in sequence on original bdbox (0,224,0,224)
+        Indexes ordering is [trigger, right, left, up, down, bigger, smaller, fatter, taller]
+        *Here we assume no trigger (0) in the actions array
+        --------
         Argument:
-        current_coord - the current coordinate of this agent, should comes in four elements vector (left, right, top, bottom)
-        action        - the index of taken action, should between 0-8
-        ----------
+        - actions: an array of indexes of actions, e.g [1,4,3,2,5]
+        --------
         Return:
-        new_coord     - the coordinate after taking the action, also four elements vector
+        - The final bounding box after all actions coming in [left, right, top, bottom]
         """
-        
-        real_x_min, real_x_max, real_y_min, real_y_max = current_coord
+        real_x_min, real_x_max, real_y_min, real_y_max = 0, 224, 0, 224
 
-        alpha_h = self.alpha * (real_y_max - real_y_min)
-        alpha_w = self.alpha * (real_x_max - real_x_min)
-        if action == 1: # Right
-            real_x_min += alpha_w
-            real_x_max += alpha_w
-        if action == 2: # Left
-            real_x_min -= alpha_w
-            real_x_max -= alpha_w
-        if action == 3: # Up 
-            real_y_min -= alpha_h
-            real_y_max -= alpha_h
-        if action == 4: # Down
-            real_y_min += alpha_h
-            real_y_max += alpha_h
-        if action == 5: # Bigger
-            real_y_min -= alpha_h
-            real_y_max += alpha_h
-            real_x_min -= alpha_w
-            real_x_max += alpha_w
-        if action == 6: # Smaller
-            real_y_min += alpha_h
-            real_y_max -= alpha_h
-            real_x_min += alpha_w
-            real_x_max -= alpha_w
-        if action == 7: # Fatter
-            real_y_min += alpha_h
-            real_y_max -= alpha_h
-        if action == 8: # Taller
-            real_x_min += alpha_w
-            real_x_max -= alpha_w
+        for r in actions:
+            alpha_h = self.alpha * (  real_y_max - real_y_min )
+            alpha_w = self.alpha * (  real_x_max - real_x_min )
+            if r == 1: # Right
+                real_x_min += alpha_w
+                real_x_max += alpha_w
+            if r == 2: # Left
+                real_x_min -= alpha_w
+                real_x_max -= alpha_w
+            if r == 3: # Up 
+                real_y_min -= alpha_h
+                real_y_max -= alpha_h
+            if r == 4: # Down
+                real_y_min += alpha_h
+                real_y_max += alpha_h
+            if r == 5: # Bigger
+                real_y_min -= alpha_h
+                real_y_max += alpha_h
+                real_x_min -= alpha_w
+                real_x_max += alpha_w
+            if r == 6: # Smaller
+                real_y_min += alpha_h
+                real_y_max -= alpha_h
+                real_x_min += alpha_w
+                real_x_max -= alpha_w
+            if r == 7: # Fatter
+                real_y_min += alpha_h
+                real_y_max -= alpha_h
+            if r == 8: # Taller
+                real_x_min += alpha_w
+                real_x_max -= alpha_w
                 
-        real_x_min = self.rewrap(real_x_min)
-        real_x_max = self.rewrap(real_x_max)
-        real_y_min = self.rewrap(real_y_min)
-        real_y_max = self.rewrap(real_y_max)
-        
+            real_x_min = self.rewrap(real_x_min)
+            real_x_max = self.rewrap(real_x_max)
+            real_y_min = self.rewrap(real_y_min)
+            real_y_max = self.rewrap(real_y_max)
         return [real_x_min, real_x_max, real_y_min, real_y_max]
     
-    def get_best_next_action(self, current_coord, ground_truth):
+    def get_best_next_action(self, actions, ground_truth):
         """
         Given actions, traverse every possible action, cluster them into positive actions and negative actions
         Then randomly choose one positive actions if exist, or choose one negtive actions anyways
         It is used for epsilon-greedy policy
         ----------
         Argument:
-        current_coord - the current coordinate of this agent, should comes in four elements vector (left, right, top, bottom)
+        actions - an array of indexes of actions that represents the current state of this agent, e.g [1,4,3,2,5]
+        ground_truth - the groundtruth of current object
         ----------
         Return:
         An action index that represents the best action next
         """
         positive_actions = []
         negative_actions = []
+        actual_equivalent_coord = self.calculate_position_box(actions)
         for i in range(0, 9):
-            new_equivalent_coord = self.calculate_position_box(current_coord, i)
+            copy_actions = actions.copy()
+            copy_actions.append(i)
+            new_equivalent_coord = self.calculate_position_box(copy_actions)
             if i!=0:
-                reward = self.compute_reward(new_equivalent_coord, current_coord, ground_truth)
+                reward = self.compute_reward(new_equivalent_coord, actual_equivalent_coord, ground_truth)
             else:
-                reward = self.compute_trigger_reward(new_equivalent_coord, ground_truth)
+                reward = self.compute_trigger_reward(new_equivalent_coord,  ground_truth)
             
             if reward>=0:
                 positive_actions.append(i)
@@ -227,15 +230,15 @@ class Agent():
             return random.choice(negative_actions)
         return random.choice(positive_actions)
 
-    def select_action(self, state, current_coord, ground_truth):
+    def select_action(self, state, actions, ground_truth):
         """
         Select an action during the interaction with environment, using epsilon greedy policy
         This implementation should be used when training
         ----------
         Argument:
-        state         - the state varible of current agent, consisting of (o,h), should conform to input shape of policy net
-        current_coord - the current coordinate of this agent, should comes in four elements vector (left, right, top, bottom)
-        ground_truth  - the groundtruth of current object
+        state - the state varible of current agent, consisting of (o,h), should conform to input shape of policy net
+        actions - an array of indexes of actions that represents the current state of this agent, e.g [1,4,3,2,5]
+        ground_truth - the groundtruth of current object
         ----------
         Return:
         An action index after conducting epsilon-greedy policy to current state
@@ -259,7 +262,7 @@ class Agent():
                 except:
                     return action.cpu().numpy()
         else:
-            return self.get_best_next_action(current_coord, ground_truth)
+            return self.get_best_next_action(actions, ground_truth)
 
     def select_action_model(self, state):
         """
@@ -273,16 +276,16 @@ class Agent():
         An action index which is generated by policy net
         """
         with torch.no_grad():
-            if use_cuda:
-                inpu = Variable(state).cuda()
-            else:
-                inpu = Variable(state)
-            qval = self.policy_net(inpu)
-            _, predicted = torch.max(qval.data,1)
-            #print("Predicted : "+str(qval.data))
-            action = predicted[0] # + 1
-            #print(action)
-            return action
+                if use_cuda:
+                    inpu = Variable(state).cuda()
+                else:
+                    inpu = Variable(state)
+                qval = self.policy_net(inpu)
+                _, predicted = torch.max(qval.data,1)
+                #print("Predicted : "+str(qval.data))
+                action = predicted[0] # + 1
+                #print(action)
+                return action
             
     def rewrap(self, coord):
         """
@@ -299,15 +302,13 @@ class Agent():
         Use feature extractor (a pre-trained CNN model) to transform an image to feature vectors
         ----------
         Argument:
-        image          - an image representation, which should conform to the input shape of feature extractor network
+        image - an image representation, which should conform to the input shape of feature extractor network
         ----------
         Return:
         feature vector - a feature map which is another representation of the original image
-                         dimension of this feature map depends on network, if using VGG16, it is (7,7,512)
+                         dimension of this feature map depends on network, if using VGG16, it is (4096,)
         """
-        # add first dimension to image and assign it to 1
         image = image.view(1,*image.shape)
-        # change it to torch Variable
         image = Variable(image).type(dtype)
         if use_cuda:
             image = image.cuda()
@@ -319,17 +320,20 @@ class Agent():
         Update action history vector with a new action
         ---------
         Argument:
-        action         - a new taken action that should be updated into action history
+        action - a new taken action that should be updated into action history
         ---------
         Return:
-        actions_history - a tensor of (9x9), encoding action history information
+        action_history - a tensor of (10x9), encoding action history information
         """
         action_vector = torch.zeros(9)
         action_vector[action] = 1
-        # if current history vector is less than 9, just add new one to the last
-        for i in range(0,8,1):
-            self.actions_history[i][:] = self.actions_history[i+1][:]
-        self.actions_history[8][:] = action_vector[:]
+        size_history_vector = len(torch.nonzero(self.actions_history))
+        if size_history_vector < 9:
+            self.actions_history[size_history_vector][action] = 1
+        else:
+            for i in range(8,0,-1):
+                self.actions_history[i][:] = self.actions_history[i-1][:]
+            self.actions_history[0][:] = action_vector[:] 
         return self.actions_history
     
     def compose_state(self, image, dtype=FloatTensor):
@@ -351,7 +355,7 @@ class Agent():
     
     ########################
     # 4. Main training functions
-    def optimize_model(self, verbose):
+    def optimize_model(self):
         """
         Sample a batch from experience memory and use this batch to optimize the model (DQN)
         """
@@ -365,7 +369,7 @@ class Agent():
         # fetch next_state_batch, excluding final states
         non_final_mask = torch.Tensor(tuple(map(lambda s: s is not None, batch.next_state))).bool()
         next_states = [s for s in batch.next_state if s is not None]
-        non_final_next_states = Variable(torch.cat(next_states)).type(Tensor)
+        non_final_next_states = Variable(torch.cat(next_states), volatile=True).type(Tensor)
         # fetch state_batch
         state_batch = Variable(torch.cat(batch.state)).type(Tensor)
         if use_cuda:
@@ -385,10 +389,10 @@ class Agent():
         if use_cuda:
             non_final_next_states = non_final_next_states.cuda()
         
-        # target_net is a frozen net that used to compute q-values, we do not update it weights
-        with torch.no_grad():
-            d = self.target_net(non_final_next_states) 
-            next_state_values[non_final_mask] = d.max(1)[0].view(-1,1)
+        # target_net is a frozen net that used to compute q-values
+        d = self.target_net(non_final_next_states) 
+        next_state_values[non_final_mask] = d.max(1)[0].view(-1,1)
+        next_state_values.volatile = False
         
         # compute expected q value
         expected_state_action_values = (next_state_values * self.GAMMA) + reward_batch
@@ -396,130 +400,80 @@ class Agent():
         # compute loss
         loss = criterion(state_action_values, expected_state_action_values)
         
-        if verbose:
-            print("Loss:{}".format(loss))
-            
         # optimize
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
         
-    def train(self, train_loader, verbose = False):
-        """
-        Use data in a train_loader to train an agent.
-        This train_loader must contain images for only one class
-        Each episode is done when this agent has interacted with all training images
-        Each episode is performed as following:
-        - Fetch a new training image
-        - The agent take an action to interacte with this image using epsilon-greedy policy
-          Each step will be pushed into experience replay
-          After each step, update the weights of this network once
-          The interaction finishes when triggered or up to 20 steps
-        - Update the target net after the whole episode is done
-        - Decrease epsilon
-        - Save Network
-        """
+    def train(self, train_loader):
         xmin = 0.0
         xmax = 224.0
         ymin = 0.0
         ymax = 224.0
 
         for i_episode in range(self.num_episodes):
-            # Start i_episode
             print("Episode "+str(i_episode))
-            img_id = 0
-            # Traverse every training image to do interaction
             for key, value in  train_loader.items():
-                
-                if verbose:
-                    img_id += 1
-                    print("Training on Img {}/{}".format(img_id, len(train_loader.items())))
-                    
-                # fetch one image and ground_truth from train_loader
                 image, ground_truth_boxes = extract(key, train_loader)
                 original_image = image.clone()
                 ground_truth = ground_truth_boxes[0]
-                
-                # initialization setting
-                self.actions_history = torch.zeros((9,9))
-                new_image = image
+                all_actions = []
+        
+                self.actions_history = torch.ones((9,9))
                 state = self.compose_state(image)
-                
                 original_coordinates = [xmin, xmax, ymin, ymax]
-                self.current_coord = original_coordinates
-                new_equivalent_coord = original_coordinates
-              
+                new_image = image
                 done = False
                 t = 0
-                
-                # interaction with environment (image)
+                actual_equivalent_coord = original_coordinates
+                new_equivalent_coord = original_coordinates
                 while not done:
-                    # increase step count
                     t += 1
-                    
-                    # take action according to epsilon-greedy policy
-                    action = self.select_action(state, self.current_coord, ground_truth)
-                    
-                    # if action ==0, trigger
+                    action = self.select_action(state, all_actions, ground_truth)
+                    all_actions.append(action)
                     if action == 0:
                         next_state = None
-                        closest_gt = self.get_max_bdbox(ground_truth_boxes, self.current_coord)
-                        reward = self.compute_trigger_reward(self.current_coord, closest_gt)
+                        new_equivalent_coord = self.calculate_position_box(all_actions)
+                        closest_gt = self.get_max_bdbox( ground_truth_boxes, new_equivalent_coord )
+                        reward = self.compute_trigger_reward(new_equivalent_coord,  closest_gt)
                         done = True
-                    
-                    # if not, compute next coordinate
+
                     else:
                         self.actions_history = self.update_history(action)
-                        new_equivalent_coord = self.calculate_position_box(self.current_coord, action)
-                        new_xmin = self.rewrap(int(new_equivalent_coord[2])-16)
-                        new_xmax = self.rewrap(int(new_equivalent_coord[3])+16)
-                        new_ymin = self.rewrap(int(new_equivalent_coord[0])-16)
-                        new_ymax = self.rewrap(int(new_equivalent_coord[1])+16)
+                        new_equivalent_coord = self.calculate_position_box(all_actions)
                         
-                        # fetch new_image (a crop of whole image) according to new coordinate
-                        new_image = original_image[:, new_xmin:new_xmax, new_ymin:new_ymax]
+                        new_image = original_image[:, int(new_equivalent_coord[2]):int(new_equivalent_coord[3]), int(new_equivalent_coord[0]):int(new_equivalent_coord[1])]
                         try:
                             new_image = transform(new_image)
                         except ValueError:
                             break                        
-                        
+
                         next_state = self.compose_state(new_image)
-                        closest_gt = self.get_max_bdbox(ground_truth_boxes, new_equivalent_coord)
-                        reward = self.compute_reward(new_equivalent_coord, self.current_coord, closest_gt)
-                        self.current_coord = new_equivalent_coord
-                    
-                    # tolerate
+                        closest_gt = self.get_max_bdbox( ground_truth_boxes, new_equivalent_coord )
+                        reward = self.compute_reward(new_equivalent_coord, actual_equivalent_coord, closest_gt)
+                        
+                        actual_equivalent_coord = new_equivalent_coord
                     if t == 20:
                         done = True
-                        
                     self.memory.push(state, int(action), next_state, reward)
 
                     # Move to the next state
                     state = next_state
                     image = new_image
-                    
                     # Perform one step of the optimization (on the target network)
-                    self.optimize_model(verbose)
+                    self.optimize_model()
                     
-            # update target net every TARGET_UPDATE episodes
+            
             if i_episode % self.TARGET_UPDATE == 0:
                 self.target_net.load_state_dict(self.policy_net.state_dict())
-            
-            # linearly decrease epsilon on first 5 episodes
+
             if i_episode < 5:
                 self.EPS -= 0.18
-                
-            # Save network every episode
             self.save_network()
 
             print('Complete')
         
-    def get_max_bdbox(self, ground_truth_boxes, actual_coordinates):
-        """
-        A simple function to hanlde more than 1 object in a picture
-        It will compute IoU over every ground truth box and current coordinate and choose the largest one
-        And return the corresponding ground truth box as actual ground truth
-        """
+    def get_max_bdbox(self, ground_truth_boxes, actual_coordinates ):
         max_iou = False
         max_gt = []
         for gt in ground_truth_boxes:
@@ -535,62 +489,40 @@ class Agent():
     ########################
     # 5. Predict and evaluate functions
     def predict_image(self, image, plot=False, verbose=False):
-        """
-        Run agent on a single image, taking actions until 40 steps or triggered
-        The prediction process is following:
-        - Initialization
-        - Input state vector into policy net and get action
-        - Take action and step into new state
-        - Terminate if trigger or take up to 40 steps
-        ----------
-        Argument:
-        image   - Input image, should be resized to (224,224) first
-        plot    - Bool variable, if True, plot all intermediate bounding box
-        verbose - Bool variable, if True, print out intermediate bouding box and taken action
-        ---------
-        Return:
-        The final bounding box coordinates
-        """
-        # set policy net to evaluation model, disable dropout
         self.policy_net.eval()
-        
-        # initialization
-        original_image = image.clone()
-        self.actions_history = torch.zeros((9,9))
-        state = self.compose_state(image)
-        
-        new_image = image
-        self.current_coord = [0, 224, 0, 224]
-        steps = 0
+        xmin = 0
+        xmax = 224
+        ymin = 0
+        ymax = 224
+
         done = False
+        all_actions = []
+        self.actions_history = torch.ones((9,9))
+        state = self.compose_state(image)
+        original_image = image.clone()
+        new_image = image
+
+        steps = 0
         
-        # start interaction
         while not done:
             steps += 1
-            # take action according to greedy policy
             action = self.select_action_model(state)
-            
+            all_actions.append(action)
             if action == 0:
                 next_state = None
-                new_equivalent_coord = self.current_coord
+                new_equivalent_coord = self.calculate_position_box(all_actions)
                 done = True
             else:
                 self.actions_history = self.update_history(action)
-                new_equivalent_coord = self.calculate_position_box(self.current_coord, action)
+                new_equivalent_coord = self.calculate_position_box(all_actions)            
                 
-                new_xmin = self.rewrap(int(new_equivalent_coord[2])-16)
-                new_xmax = self.rewrap(int(new_equivalent_coord[3])+16)
-                new_ymin = self.rewrap(int(new_equivalent_coord[0])-16)
-                new_ymax = self.rewrap(int(new_equivalent_coord[1])+16)
-                
-                new_image = original_image[:, new_xmin:new_xmax, new_ymin:new_ymax]
+                new_image = original_image[:, int(new_equivalent_coord[2]):int(new_equivalent_coord[3]), int(new_equivalent_coord[0]):int(new_equivalent_coord[1])]
                 try:
                     new_image = transform(new_image)
                 except ValueError:
                     break            
                 
                 next_state = self.compose_state(new_image)
-                self.current_coord = new_equivalent_coord
             
             if steps == 40:
                 done = True
@@ -600,12 +532,11 @@ class Agent():
             
             if verbose:
                 print("Iteration:{} - Action:{} - Position:{}".format(steps, action, new_equivalent_coord))
-            
-            # if plot, print out current bounding box
+        
             if plot:
                 show_new_bdbox(original_image, new_equivalent_coord, color='b', count=steps)
         
-        # if plot, save all changing in bounding boxes as a gif
+
         if plot:
             #images = []
             tested = 0
@@ -621,21 +552,9 @@ class Agent():
             
             for count in range(1, steps + 1):
                 os.remove(str(count)+".png")
-                
-                
         return new_equivalent_coord
-    
-    
+
     def evaluate(self, dataset):
-        """
-        Conduct evaluation on a given dataset
-        For each image in this dataset, using this agent to predict a bounding box on it
-        Save predicted bdbox and ground truth bdbox to two lists
-        Send these two lists to tool function eval_stats_at_threshold and get results
-        *you can manually define threshold by setting threshold argument of this tool function*
-        
-        Return a dataframe that contains the result
-        """
         ground_truth_boxes = []
         predicted_boxes = []
         print("Predicting boxes...")
@@ -645,7 +564,7 @@ class Agent():
             ground_truth_boxes.append(gt_boxes)
             predicted_boxes.append(bbox)
         print("Computing recall and ap...")
-        stats = eval_stats_at_threshold(predicted_boxes, ground_truth_boxes)
+        stats = eval_stats_at_threshold(predicted_boxes, ground_truth_boxes, thresholds=[0.2,0.3,0.4,0.5])
         print("Final result : \n"+str(stats))
         return stats
 

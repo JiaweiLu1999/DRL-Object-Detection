@@ -8,7 +8,8 @@ import pandas as pd
 import random
 import tqdm.notebook as tq
 
-classes = ['cat', 'cow', 'dog', 'bird', 'car']
+# classes = ['cat', 'cow', 'dog', 'bird', 'car']
+classes = ['cat']
 
 def sort_class_extract(datasets):
     datasets_per_class = {}

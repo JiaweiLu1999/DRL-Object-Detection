@@ -8,7 +8,7 @@ def read_voc_dataset(path, year):
                             transforms.Resize((224, 224)),
                             transforms.ToTensor(),
                             ])
-    voc_data =  torchvision.datasets.VOCDetection(path, year=year, image_set='train', transform=T)
-    voc_val =  torchvision.datasets.VOCDetection(path, year=year, image_set='val', transform=T)
+    voc_data =  torchvision.datasets.VOCDetection(path, year=year, image_set='train', transform=T, dowanload=True)
+    voc_val =  torchvision.datasets.VOCDetection(path, year=year, image_set='val', transform=T, download=True)
 
     return voc_data, voc_val
