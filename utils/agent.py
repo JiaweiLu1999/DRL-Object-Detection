@@ -631,6 +631,10 @@ class Agent():
         return new_equivalent_coord, cross_flag, steps
     
     def predict_multiple_objects(self, image, plot=False, verbose=False):
+        """
+        Iteratively predict multiple objects, when one object is detected, draw a cross on it
+        Perform up to 100 steps
+        """
         
         new_image = image.clone()
         all_steps = 0

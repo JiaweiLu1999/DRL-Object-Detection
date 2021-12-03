@@ -98,14 +98,14 @@ def extract(index, loader):
     return img, ground_truth_boxes
 
 
-def voc_ap(rec, prec, ious, voc2007=True):
+def voc_ap(rec, prec, voc2007=True):
     if voc2007:
         ap = 0.0
         for t in np.arange(0.0, 1.1, 0.1):
-            if np.sum(ious >= t) == 0:
+            if np.sum(rec >= t) == 0:
                 p = 0
             else:
-                p = np.max(prec[ious >= t])
+                p = np.max(prec[rec >= t])
             ap = ap + p / 11.0
     else:
         mrec = np.concatenate(([0.0], rec, [1.0]))
@@ -141,6 +141,7 @@ def intersection_over_union(box1, box2):
         return iou
 
 def prec_rec_compute(bounding_boxes, gt_boxes, ovthresh):
+    
     nd = 0
     for each in gt_boxes:
         nd += len(each)
@@ -177,12 +178,12 @@ def prec_rec_compute(bounding_boxes, gt_boxes, ovthresh):
     tp = np.cumsum(tp)
     rec = tp / float(npos)
     prec = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
-    return prec, rec, ious
+    return prec, rec
 
 
 def compute_ap_and_recall(all_bdbox, all_gt, ovthresh):
-    prec, rec, ious = prec_rec_compute(all_bdbox, all_gt, ovthresh)
-    ap = voc_ap(rec, prec, ious, False)
+    prec, rec = prec_rec_compute(all_bdbox, all_gt, ovthresh)
+    ap = voc_ap(rec, prec, False)
     return ap, rec[-1]
 
 
