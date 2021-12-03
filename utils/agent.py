@@ -326,7 +326,6 @@ class Agent():
         """
         action_vector = torch.zeros(9)
         action_vector[action] = 1
-        # if current history vector is less than 9, just add new one to the last
         for i in range(0,8,1):
             self.actions_history[i][:] = self.actions_history[i+1][:]
         self.actions_history[8][:] = action_vector[:]
@@ -385,7 +384,7 @@ class Agent():
         if use_cuda:
             non_final_next_states = non_final_next_states.cuda()
         
-        # target_net is a frozen net that used to compute q-values, we do not update it weights
+        # target_net is a frozen net that used to compute q-values, we do not update its weights
         with torch.no_grad():
             d = self.target_net(non_final_next_states) 
             next_state_values[non_final_mask] = d.max(1)[0].view(-1,1)
@@ -544,12 +543,14 @@ class Agent():
         - Terminate if trigger or take up to 40 steps
         ----------
         Argument:
-        image   - Input image, should be resized to (224,224) first
-        plot    - Bool variable, if True, plot all intermediate bounding box
-        verbose - Bool variable, if True, print out intermediate bouding box and taken action
+        image                - Input image, should be resized to (224,224) first
+        plot                 - Bool variable, if True, plot all intermediate bounding box
+        verbose              - Bool variable, if True, print out intermediate bouding box and taken action
         ---------
         Return:
-        The final bounding box coordinates
+        new_equivalent_coord - The final bounding box coordinates
+        cross_flag           - If it should apply cross on the image, if done with trigger, True; if done with 40 steps, False
+        steps                - how many steps it consumed
         """
         # set policy net to evaluation model, disable dropout
         self.policy_net.eval()
@@ -563,6 +564,7 @@ class Agent():
         self.current_coord = [0, 224, 0, 224]
         steps = 0
         done = False
+        cross_flag = True
         
         # start interaction
         while not done:
@@ -594,6 +596,7 @@ class Agent():
             
             if steps == 40:
                 done = True
+                cross_flag = False
             
             state = next_state
             image = new_image
@@ -604,27 +607,58 @@ class Agent():
             # if plot, print out current bounding box
             if plot:
                 show_new_bdbox(original_image, new_equivalent_coord, color='b', count=steps)
+                
+            
         
         # if plot, save all changing in bounding boxes as a gif
-        if plot:
-            #images = []
-            tested = 0
-            while os.path.isfile('media/movie_'+str(tested)+'.gif'):
-                tested += 1
-            # filepaths
-            fp_out = "media/movie_"+str(tested)+".gif"
-            images = []
-            for count in range(1, steps+1):
-                images.append(imageio.imread(str(count)+".png"))
+#         if plot:
+#             #images = []
+#             tested = 0
+#             while os.path.isfile('media/movie_'+str(tested)+'.gif'):
+#                 tested += 1
+#             # filepaths
+#             fp_out = "media/movie_"+str(tested)+".gif"
+#             images = []
+#             for count in range(1, steps+1):
+#                 images.append(imageio.imread(str(count)+".png"))
             
-            imageio.mimsave(fp_out, images)
+#             imageio.mimsave(fp_out, images)
             
-            for count in range(1, steps + 1):
-                os.remove(str(count)+".png")
+#             for count in range(1, steps + 1):
+#                 os.remove(str(count)+".png")
                 
                 
-        return new_equivalent_coord
+        return new_equivalent_coord, cross_flag, steps
     
+    def predict_multiple_objects(self, image, plot=False, verbose=False):
+        
+        new_image = image.clone()
+        all_steps = 0
+        bdboxes = []   
+        
+        while 1:
+            bdbox, cross_flag, steps = self.predict_image(new_image, plot, verbose)
+            bdboxes.append(bdbox)
+            
+            if cross_flag:
+                mask = torch.ones((224,224))
+                middle_x = round((bdbox[0] + bdbox[1])/2)
+                middle_y = round((bdbox[2] + bdbox[3])/2)
+                length_x = round((bdbox[1] - bdbox[0])/8)
+                length_y = round((bdbox[3] - bdbox[2])/8)
+
+                mask[middle_y-length_y:middle_y+length_y,int(bdbox[0]):int(bdbox[1])] = 0
+                mask[int(bdbox[2]):int(bdbox[3]),middle_x-length_x:middle_x+length_x] = 0
+
+                new_image *= mask
+                
+            all_steps += steps
+                
+            if all_steps > 100:
+                break
+                    
+        return bdboxes
+        
     
     def evaluate(self, dataset):
         """
@@ -641,9 +675,10 @@ class Agent():
         print("Predicting boxes...")
         for key, value in dataset.items():
             image, gt_boxes = extract(key, dataset)
-            bbox = self.predict_image(image)
+            bbox = self.predict_multiple_objects(image)
             ground_truth_boxes.append(gt_boxes)
             predicted_boxes.append(bbox)
+
         print("Computing recall and ap...")
         stats = eval_stats_at_threshold(predicted_boxes, ground_truth_boxes)
         print("Final result : \n"+str(stats))
