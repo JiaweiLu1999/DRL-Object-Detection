@@ -142,10 +142,13 @@ def intersection_over_union(box1, box2):
 
 def prec_rec_compute(bounding_boxes, gt_boxes, ovthresh):
     
-    nd = 0
+    npos = 0
     for each in gt_boxes:
+        npos += len(each)
+        
+    nd = 0
+    for each in bounding_boxes:
         nd += len(each)
-    npos = nd
     
     ious = np.zeros(nd)
     tp = np.zeros(nd)
@@ -153,15 +156,17 @@ def prec_rec_compute(bounding_boxes, gt_boxes, ovthresh):
     d = 0
 
     for index in range(len(bounding_boxes)):
-        for gtbox in gt_boxes[index]:
+        is_detected = np.zeros(len(gt_boxes[index]))
+        for bdbox in bounding_boxes[index]:
             best_iou = 0
-            for bdbox in bounding_boxes[index]:
+            for i, gtbox in enumerate(gt_boxes[index]):
                 iou = intersection_over_union(gtbox,bdbox)
                 if iou > best_iou:
                     best_iou = iou
-                    
-            if best_iou > ovthresh:
+            if best_iou > ovthresh and not is_detected[i]:
                 tp[d] = 1.0
+                is_detected[i] = 1
+                
             else:            
                 fp[d] = 1.0
                 
@@ -172,8 +177,8 @@ def prec_rec_compute(bounding_boxes, gt_boxes, ovthresh):
     sort_idx = np.argsort(-ious)
     fp = fp[sort_idx]
     tp = tp[sort_idx]
-    ious = ious[sort_idx]
-    
+    ious = ious[sort_idx]  
+
     fp = np.cumsum(fp)
     tp = np.cumsum(tp)
     rec = tp / float(npos)
@@ -183,11 +188,12 @@ def prec_rec_compute(bounding_boxes, gt_boxes, ovthresh):
 
 def compute_ap_and_recall(all_bdbox, all_gt, ovthresh):
     prec, rec = prec_rec_compute(all_bdbox, all_gt, ovthresh)
-    ap = voc_ap(rec, prec, False)
+
+    ap = voc_ap(rec, prec, True)
     return ap, rec[-1]
 
 
-def eval_stats_at_threshold(all_bdbox, all_gt, thresholds=[0.4, 0.5, 0.6]):
+def eval_stats_at_threshold(all_bdbox, all_gt, thresholds=[0.5]):
     stats = {}
     for ovthresh in thresholds:
         ap, recall = compute_ap_and_recall(all_bdbox, all_gt, ovthresh)

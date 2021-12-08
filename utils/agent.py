@@ -158,36 +158,48 @@ class Agent():
         new_coord     - the coordinate after taking the action, also four elements vector
         """
         
+        if action == 0:
+            return current_coord
+        
         real_x_min, real_x_max, real_y_min, real_y_max = current_coord
-
-        alpha_h = self.alpha * (real_y_max - real_y_min)
-        alpha_w = self.alpha * (real_x_max - real_x_min)
-        if action == 1: # Right
+        
+        alpha_part = math.ceil(action/8)
+        if alpha_part == 1:
+            alpha = 0.2
+        elif alpha_part == 2:
+            alpha = 0.3
+            
+        alpha_h = alpha * (real_y_max - real_y_min)
+        alpha_w = alpha * (real_x_max - real_x_min)
+        
+        action_part = action%8;
+        
+        if action_part == 1: # Right
             real_x_min += alpha_w
             real_x_max += alpha_w
-        if action == 2: # Left
+        if action_part == 2: # Left
             real_x_min -= alpha_w
             real_x_max -= alpha_w
-        if action == 3: # Up 
+        if action_part == 3: # Up 
             real_y_min -= alpha_h
             real_y_max -= alpha_h
-        if action == 4: # Down
+        if action_part == 4: # Down
             real_y_min += alpha_h
             real_y_max += alpha_h
-        if action == 5: # Bigger
+        if action_part == 5: # Bigger
             real_y_min -= alpha_h
             real_y_max += alpha_h
             real_x_min -= alpha_w
             real_x_max += alpha_w
-        if action == 6: # Smaller
+        if action_part == 6: # Smaller
             real_y_min += alpha_h
             real_y_max -= alpha_h
             real_x_min += alpha_w
             real_x_max -= alpha_w
-        if action == 7: # Fatter
+        if action_part == 7: # Fatter
             real_y_min += alpha_h
             real_y_max -= alpha_h
-        if action == 8: # Taller
+        if action_part == 0: # Taller
             real_x_min += alpha_w
             real_x_max -= alpha_w
                 
@@ -212,7 +224,7 @@ class Agent():
         """
         positive_actions = []
         negative_actions = []
-        for i in range(0, 9):
+        for i in range(0, self.n_actions):
             new_equivalent_coord = self.calculate_position_box(current_coord, i)
             if i!=0:
                 reward = self.compute_reward(new_equivalent_coord, current_coord, ground_truth)
@@ -324,7 +336,7 @@ class Agent():
         Return:
         actions_history - a tensor of (9x9), encoding action history information
         """
-        action_vector = torch.zeros(9)
+        action_vector = torch.zeros(self.n_actions)
         action_vector[action] = 1
         for i in range(0,8,1):
             self.actions_history[i][:] = self.actions_history[i+1][:]
@@ -361,10 +373,12 @@ class Agent():
         # every memory comes in foramt ('state', 'action', 'next_state', 'reward')
         transitions = self.memory.sample(self.BATCH_SIZE)
         batch = Transition(*zip(*transitions))
+        
         # fetch next_state_batch, excluding final states
         non_final_mask = torch.Tensor(tuple(map(lambda s: s is not None, batch.next_state))).bool()
         next_states = [s for s in batch.next_state if s is not None]
         non_final_next_states = Variable(torch.cat(next_states)).type(Tensor)
+        
         # fetch state_batch
         state_batch = Variable(torch.cat(batch.state)).type(Tensor)
         if use_cuda:
@@ -403,6 +417,8 @@ class Agent():
         loss.backward()
         self.optimizer.step()
         
+        return loss
+        
     def train(self, train_loader, verbose = False):
         """
         Use data in a train_loader to train an agent.
@@ -422,7 +438,8 @@ class Agent():
         xmax = 224.0
         ymin = 0.0
         ymax = 224.0
-
+        
+        self.loss_record = []
         for i_episode in range(self.num_episodes):
             # Start i_episode
             print("Episode "+str(i_episode))
@@ -440,7 +457,7 @@ class Agent():
                 ground_truth = ground_truth_boxes[0]
                 
                 # initialization setting
-                self.actions_history = torch.zeros((9,9))
+                self.actions_history = torch.zeros((9,self.n_actions))
                 new_image = image
                 state = self.compose_state(image)
                 
@@ -498,7 +515,8 @@ class Agent():
                     image = new_image
                     
                     # Perform one step of the optimization (on the target network)
-                    self.optimize_model(verbose)
+                    loss = self.optimize_model(verbose)
+                    self.loss_record.append(loss)
                     
             # update target net every TARGET_UPDATE episodes
             if i_episode % self.TARGET_UPDATE == 0:
@@ -533,7 +551,7 @@ class Agent():
     
     ########################
     # 5. Predict and evaluate functions
-    def predict_image(self, image, plot=False, verbose=False):
+    def predict_image(self, image, plot=False, verbose=False, original_bdbox = [0,224,0,224]):
         """
         Run agent on a single image, taking actions until 40 steps or triggered
         The prediction process is following:
@@ -557,11 +575,11 @@ class Agent():
         
         # initialization
         original_image = image.clone()
-        self.actions_history = torch.zeros((9,9))
+        self.actions_history = torch.zeros((9,self.n_actions))
         state = self.compose_state(image)
         
         new_image = image
-        self.current_coord = [0, 224, 0, 224]
+        self.current_coord = original_bdbox
         steps = 0
         done = False
         cross_flag = True
@@ -586,6 +604,7 @@ class Agent():
                 new_ymax = self.rewrap(int(new_equivalent_coord[1])+16)
                 
                 new_image = original_image[:, new_xmin:new_xmax, new_ymin:new_ymax]
+                
                 try:
                     new_image = transform(new_image)
                 except ValueError:
@@ -594,7 +613,7 @@ class Agent():
                 next_state = self.compose_state(new_image)
                 self.current_coord = new_equivalent_coord
             
-            if steps == 40:
+            if steps == 20:
                 done = True
                 cross_flag = False
             
@@ -636,15 +655,22 @@ class Agent():
         Perform up to 100 steps
         """
         
+        original_bdboxes = [[0,224,0,224],
+                            [0,194,0,194],
+                            [30,224,0,194],
+                            [0,194,30,224],
+                            [30,224,30,224]]
+        
         new_image = image.clone()
+        i = 0
         all_steps = 0
         bdboxes = []   
         
         while 1:
-            bdbox, cross_flag, steps = self.predict_image(new_image, plot, verbose)
-            bdboxes.append(bdbox)
+            bdbox, cross_flag, steps = self.predict_image(new_image, plot, verbose, original_bdboxes[i])
             
             if cross_flag:
+                bdboxes.append(bdbox)
                 mask = torch.ones((224,224))
                 middle_x = round((bdbox[0] + bdbox[1])/2)
                 middle_y = round((bdbox[2] + bdbox[3])/2)
@@ -655,10 +681,12 @@ class Agent():
                 mask[int(bdbox[2]):int(bdbox[3]),middle_x-length_x:middle_x+length_x] = 0
 
                 new_image *= mask
+            else:
+                i += 1
                 
             all_steps += steps
                 
-            if all_steps > 100:
+            if all_steps >= 100:
                 break
                     
         return bdboxes
