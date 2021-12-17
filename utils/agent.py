@@ -419,6 +419,118 @@ class Agent():
         
         return loss
         
+#     def train(self, train_loader, verbose = False):
+#         """
+#         Use data in a train_loader to train an agent.
+#         This train_loader must contain images for only one class
+#         Each episode is done when this agent has interacted with all training images
+#         Each episode is performed as following:
+#         - Fetch a new training image
+#         - The agent take an action to interacte with this image using epsilon-greedy policy
+#           Each step will be pushed into experience replay
+#           After each step, update the weights of this network once
+#           The interaction finishes when triggered or up to 20 steps
+#         - Update the target net after the whole episode is done
+#         - Decrease epsilon
+#         - Save Network
+#         """
+#         xmin = 0.0
+#         xmax = 224.0
+#         ymin = 0.0
+#         ymax = 224.0
+        
+#         self.loss_record = []
+#         for i_episode in range(self.num_episodes):
+#             # Start i_episode
+#             print("Episode "+str(i_episode))
+#             img_id = 0
+#             # Traverse every training image to do interaction
+#             for key, value in  train_loader.items():
+                
+#                 if verbose:
+#                     img_id += 1
+#                     print("Training on Img {}/{}".format(img_id, len(train_loader.items())))
+                    
+#                 # fetch one image and ground_truth from train_loader
+#                 image, ground_truth_boxes = extract(key, train_loader)
+#                 original_image = image.clone()
+#                 ground_truth = ground_truth_boxes[0]
+                
+#                 # initialization setting
+#                 self.actions_history = torch.zeros((9,self.n_actions))
+#                 new_image = image
+#                 state = self.compose_state(image)
+                
+#                 original_coordinates = [xmin, xmax, ymin, ymax]
+#                 self.current_coord = original_coordinates
+#                 new_equivalent_coord = original_coordinates
+              
+#                 done = False
+#                 t = 0
+                
+#                 # interaction with environment (image)
+#                 while not done:
+#                     # increase step count
+#                     t += 1
+                    
+#                     # take action according to epsilon-greedy policy
+#                     action = self.select_action(state, self.current_coord, ground_truth)
+                    
+#                     # if action ==0, trigger
+#                     if action == 0:
+#                         next_state = None
+#                         closest_gt = self.get_max_bdbox(ground_truth_boxes, self.current_coord)
+#                         reward = self.compute_trigger_reward(self.current_coord, closest_gt)
+#                         done = True
+                    
+#                     # if not, compute next coordinate
+#                     else:
+#                         self.actions_history = self.update_history(action)
+#                         new_equivalent_coord = self.calculate_position_box(self.current_coord, action)
+#                         new_xmin = self.rewrap(int(new_equivalent_coord[2])-16)
+#                         new_xmax = self.rewrap(int(new_equivalent_coord[3])+16)
+#                         new_ymin = self.rewrap(int(new_equivalent_coord[0])-16)
+#                         new_ymax = self.rewrap(int(new_equivalent_coord[1])+16)
+                        
+#                         # fetch new_image (a crop of whole image) according to new coordinate
+#                         new_image = original_image[:, new_xmin:new_xmax, new_ymin:new_ymax]
+#                         try:
+#                             new_image = transform(new_image)
+#                         except ValueError:
+#                             break                        
+                        
+#                         next_state = self.compose_state(new_image)
+#                         closest_gt = self.get_max_bdbox(ground_truth_boxes, new_equivalent_coord)
+#                         reward = self.compute_reward(new_equivalent_coord, self.current_coord, closest_gt)
+#                         self.current_coord = new_equivalent_coord
+                    
+#                     # tolerate
+#                     if t == 20:
+#                         done = True
+                        
+#                     self.memory.push(state, int(action), next_state, reward)
+
+#                     # Move to the next state
+#                     state = next_state
+#                     image = new_image
+                    
+#                     # Perform one step of the optimization (on the target network)
+#                     loss = self.optimize_model(verbose)
+#                     self.loss_record.append(loss)
+                    
+#             # update target net every TARGET_UPDATE episodes
+#             if i_episode % self.TARGET_UPDATE == 0:
+#                 self.target_net.load_state_dict(self.policy_net.state_dict())
+            
+#             # linearly decrease epsilon on first 5 episodes
+#             if i_episode < 5:
+#                 self.EPS -= 0.18
+                
+#             # Save network every episode
+#             self.save_network()
+
+#             print('Complete')
+            
     def train(self, train_loader, verbose = False):
         """
         Use data in a train_loader to train an agent.
@@ -454,69 +566,75 @@ class Agent():
                 # fetch one image and ground_truth from train_loader
                 image, ground_truth_boxes = extract(key, train_loader)
                 original_image = image.clone()
-                ground_truth = ground_truth_boxes[0]
-                
-                # initialization setting
-                self.actions_history = torch.zeros((9,self.n_actions))
-                new_image = image
-                state = self.compose_state(image)
-                
-                original_coordinates = [xmin, xmax, ymin, ymax]
-                self.current_coord = original_coordinates
-                new_equivalent_coord = original_coordinates
-              
-                done = False
-                t = 0
-                
-                # interaction with environment (image)
-                while not done:
-                    # increase step count
-                    t += 1
-                    
-                    # take action according to epsilon-greedy policy
-                    action = self.select_action(state, self.current_coord, ground_truth)
-                    
-                    # if action ==0, trigger
-                    if action == 0:
-                        next_state = None
-                        closest_gt = self.get_max_bdbox(ground_truth_boxes, self.current_coord)
-                        reward = self.compute_trigger_reward(self.current_coord, closest_gt)
-                        done = True
-                    
-                    # if not, compute next coordinate
-                    else:
-                        self.actions_history = self.update_history(action)
-                        new_equivalent_coord = self.calculate_position_box(self.current_coord, action)
-                        new_xmin = self.rewrap(int(new_equivalent_coord[2])-16)
-                        new_xmax = self.rewrap(int(new_equivalent_coord[3])+16)
-                        new_ymin = self.rewrap(int(new_equivalent_coord[0])-16)
-                        new_ymax = self.rewrap(int(new_equivalent_coord[1])+16)
-                        
-                        # fetch new_image (a crop of whole image) according to new coordinate
-                        new_image = original_image[:, new_xmin:new_xmax, new_ymin:new_ymax]
-                        try:
-                            new_image = transform(new_image)
-                        except ValueError:
-                            break                        
-                        
-                        next_state = self.compose_state(new_image)
-                        closest_gt = self.get_max_bdbox(ground_truth_boxes, new_equivalent_coord)
-                        reward = self.compute_reward(new_equivalent_coord, self.current_coord, closest_gt)
-                        self.current_coord = new_equivalent_coord
-                    
-                    # tolerate
-                    if t == 20:
-                        done = True
-                        
-                    self.memory.push(state, int(action), next_state, reward)
 
-                    # Move to the next state
-                    state = next_state
-                    image = new_image
+                # shuffle gt_boxes for generalization
+                random.shuffle(ground_truth_boxes)
+
+                # iterate gt_box to learn cross
+                for ground_truth in ground_truth_boxes:
+                    # initialization setting
+                    self.actions_history = torch.zeros((9,self.n_actions))
+                    new_image = image
+
+                    state = self.compose_state(new_image)
                     
-                    # Perform one step of the optimization (on the target network)
-                    loss = self.optimize_model(verbose)
-                    self.loss_record.append(loss)
+                    original_coordinates = [xmin, xmax, ymin, ymax]
+                    self.current_coord = original_coordinates
+                    new_equivalent_coord = original_coordinates
+                
+                    done = False
+                    t = 0
+                    
+
+                    # interaction with environment (image)
+                    while not done:
+                        
+                        # take action according to epsilon-greedy policy
+                        action = self.select_action(state, self.current_coord, ground_truth)
+                        
+                        # if action ==0, trigger
+                        if action == 0:
+                            next_state = None
+
+                            reward = self.compute_trigger_reward(self.current_coord, ground_truth)
+                            done = True
+                        
+                        # if not, compute next coordinate
+                        else:
+                            self.actions_history = self.update_history(action)
+                            new_equivalent_coord = self.calculate_position_box(self.current_coord, action)
+                            new_xmin = self.rewrap(int(new_equivalent_coord[2])-16)
+                            new_xmax = self.rewrap(int(new_equivalent_coord[3])+16)
+                            new_ymin = self.rewrap(int(new_equivalent_coord[0])-16)
+                            new_ymax = self.rewrap(int(new_equivalent_coord[1])+16)
+                            
+                            # fetch new_image (a crop of whole image) according to new coordinate
+                            new_image = original_image[:, new_xmin:new_xmax, new_ymin:new_ymax]
+                            try:
+                                new_image = transform(new_image)
+                            except ValueError:
+                                break                        
+                            
+                            next_state = self.compose_state(new_image)
+                            reward = self.compute_reward(new_equivalent_coord, self.current_coord, ground_truth)
+                            self.current_coord = new_equivalent_coord
+                        
+                        # increase step count
+                        t += 1
+                        
+                        # tolerate
+                        if t == 20:
+                            done = True
+                            
+                        self.memory.push(state, int(action), next_state, reward)
+
+                        # Move to the next state
+                        state = next_state
+                        
+                        # Perform one step of the optimization (on the target network)
+                        loss = self.optimize_model(verbose)
+                        self.loss_record.append(loss)
+
                     
             # update target net every TARGET_UPDATE episodes
             if i_episode % self.TARGET_UPDATE == 0:
@@ -530,7 +648,7 @@ class Agent():
             self.save_network()
 
             print('Complete')
-        
+ 
     def get_max_bdbox(self, ground_truth_boxes, actual_coordinates):
         """
         A simple function to hanlde more than 1 object in a picture
@@ -551,7 +669,33 @@ class Agent():
     
     ########################
     # 5. Predict and evaluate functions
-    def predict_image(self, image, plot=False, verbose=False, original_bdbox = [0,224,0,224]):
+    def is_repeated_trigger(self, current_coord, bdboxes):
+        '''
+        check whether the trigger is repeated
+        '''
+        if len(bdboxes) > 0:
+            max_gt = self.get_max_bdbox(bdboxes, current_coord)
+            max_iou = self.intersection_over_union(current_coord, max_gt)
+            if max_iou > 0.5:
+                return True
+        
+        return False
+    
+    def create_mask(self, mask_box, bd_box):
+        mask = torch.ones((224,224))
+        new_mask_box = [0,0,0,0]
+        
+        new_mask_box[0] = self.rewrap(round(mask_box[0] - 0.75*(mask_box[0] - bd_box[0])))
+        new_mask_box[1] = self.rewrap(round(mask_box[1] + 0.75*(bd_box[1] - mask_box[1])))
+        new_mask_box[2] = self.rewrap(round(mask_box[2] - 0.75*(mask_box[2] - bd_box[2])))
+        new_mask_box[3] = self.rewrap(round(mask_box[3] + 0.75*(bd_box[3] - mask_box[3])))
+        
+        mask[new_mask_box[2]:new_mask_box[3], new_mask_box[0]:new_mask_box[1]] = 0.3
+        return mask, new_mask_box
+        
+    
+    
+    def predict_image(self, image, plot=False, verbose=False, original_bdbox = [0,224,0,224], bdboxes = [], maskboxes = []):
         """
         Run agent on a single image, taking actions until 40 steps or triggered
         The prediction process is following:
@@ -591,6 +735,16 @@ class Agent():
             action = self.select_action_model(state)
             
             if action == 0:
+                if self.is_repeated_trigger(self.current_coord, bdboxes):
+                    max_gt = self.get_max_bdbox(bdboxes, self.current_coord)
+                    gt_index = bdboxes.index(max_gt)
+                    mask, new_mask_box = self.create_mask(maskboxes[gt_index], bdboxes[gt_index])
+                else:
+                    mid_point_x = round((self.current_coord[1] + self.current_coord[0])/2)
+                    mid_point_y = round((self.current_coord[3] + self.current_coord[2])/2)
+                    mid_point = [mid_point_x, mid_point_x, mid_point_y, mid_point_y]
+                    mask, new_mask_box = self.create_mask(mid_point, self.current_coord)
+                    gt_index = -1
                 next_state = None
                 new_equivalent_coord = self.current_coord
                 done = True
@@ -613,7 +767,8 @@ class Agent():
                 next_state = self.compose_state(new_image)
                 self.current_coord = new_equivalent_coord
             
-            if steps == 15:
+            if steps == 20:
+                mask, new_mask_box, gt_index = None, None, None
                 done = True
                 cross_flag = False
             
@@ -626,7 +781,6 @@ class Agent():
             # if plot, print out current bounding box
             if plot:
                 show_new_bdbox(original_image, new_equivalent_coord, color='b', count=steps)
-                
             
         
         # if plot, save all changing in bounding boxes as a gif
@@ -647,7 +801,7 @@ class Agent():
 #                 os.remove(str(count)+".png")
                 
                 
-        return new_equivalent_coord, cross_flag, steps
+        return new_equivalent_coord, cross_flag, steps, mask, new_mask_box, gt_index
     
     def predict_multiple_objects(self, image, plot=False, verbose=False):
         """
@@ -664,29 +818,26 @@ class Agent():
         new_image = image.clone()
         i = 0
         all_steps = 0
-        bdboxes = []   
+        bdboxes = []
+        maskboxes = []
         
         while 1:
-            bdbox, cross_flag, steps = self.predict_image(new_image, plot, verbose, original_bdboxes[i])
+            bdbox, cross_flag, steps, mask, new_mask_box, gt_index = self.predict_image(new_image, plot, verbose, original_bdboxes[i%5], bdboxes, maskboxes)
             
             if cross_flag:
-                bdboxes.append(bdbox)
-                mask = torch.ones((224,224))
-                middle_x = round((bdbox[0] + bdbox[1])/2)
-                middle_y = round((bdbox[2] + bdbox[3])/2)
-                length_x = round((bdbox[1] - bdbox[0])/8)
-                length_y = round((bdbox[3] - bdbox[2])/8)
-
-                mask[middle_y-length_y:middle_y+length_y,int(bdbox[0]):int(bdbox[1])] = 0
-                mask[int(bdbox[2]):int(bdbox[3]),middle_x-length_x:middle_x+length_x] = 0
-
                 new_image *= mask
+                if gt_index == -1:
+                    bdboxes.append(bdbox)
+                    maskboxes.append(new_mask_box)
+                elif gt_index >= 0:
+                    maskboxes[gt_index] = new_mask_box
+                    
             else:
                 i += 1
                 
             all_steps += steps
                 
-            if all_steps >= 45:
+            if all_steps >= 100:
                 break
                     
         return bdboxes
