@@ -122,7 +122,7 @@ class Agent():
         res = self.intersection_over_union(actual_state, ground_truth) - self.intersection_over_union(previous_state, ground_truth)
         if res <= 0:
             return -1
-        return 1
+        return 0
     
     def compute_trigger_reward(self, actual_state, ground_truth):
         """
@@ -558,7 +558,7 @@ class Agent():
         - Initialization
         - Input state vector into policy net and get action
         - Take action and step into new state
-        - Terminate if trigger or take up to 40 steps
+        - Terminate if trigger or take up to 20 steps
         ----------
         Argument:
         image                - Input image, should be resized to (224,224) first
@@ -613,7 +613,7 @@ class Agent():
                 next_state = self.compose_state(new_image)
                 self.current_coord = new_equivalent_coord
             
-            if steps == 20:
+            if steps == 15:
                 done = True
                 cross_flag = False
             
@@ -686,7 +686,7 @@ class Agent():
                 
             all_steps += steps
                 
-            if all_steps >= 100:
+            if all_steps >= 45:
                 break
                     
         return bdboxes
